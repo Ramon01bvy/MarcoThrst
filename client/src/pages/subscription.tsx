@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import Navigation from "@/components/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,14 +33,52 @@ export default function Subscription() {
     </div>;
   }
 
-  const currentPlan = user?.subscription || "free";
-  const expiryDate = user?.subscriptionExpiry ? new Date(user.subscriptionExpiry) : null;
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Fetch subscription status
+  const { data: subscriptionData } = useQuery({
+    queryKey: ['/api/user/subscription'],
+    enabled: !!isAuthenticated,
+  });
+
+  // Fetch subscription plans
+  const { data: subscriptionPlans } = useQuery({
+    queryKey: ['/api/subscription-plans'],
+  });
+
+  const currentPlan = subscriptionData?.plan || "free";
+  const expiryDate = subscriptionData?.expiresAt ? new Date(subscriptionData.expiresAt) : null;
+  const subscriptionStatus = subscriptionData?.status || "inactive";
+
+  // Create payment mutation
+  const createPaymentMutation = useMutation({
+    mutationFn: async (planId: string) => {
+      const response = await apiRequest(`/api/create-payment`, {
+        method: 'POST',
+        body: { plan: planId },
+      });
+      return response;
+    },
+    onSuccess: (data) => {
+      // Redirect to Mollie payment page
+      window.location.href = data.paymentUrl;
+    },
+    onError: (error) => {
+      console.error('Payment creation error:', error);
+      toast({
+        title: "Betalingsfout",
+        description: "Er is een fout opgetreden bij het verwerken van uw betaling. Probeer het opnieuw.",
+        variant: "destructive",
+      });
+      setIsProcessing(false);
+    },
+  });
 
   const plans = [
     {
       id: "essentieel",
       name: "Essentieel",
-      price: "€149",
+      price: subscriptionPlans?.essentieel ? `€${subscriptionPlans.essentieel.price}` : "€29.99",
       period: "/maand",
       description: "Ideaal voor wie de basis wil leggen voor een gezondere levensstijl",
       features: [
@@ -51,9 +91,9 @@ export default function Subscription() {
       popular: false,
     },
     {
-      id: "elite",
-      name: "Elite", 
-      price: "€299",
+      id: "premium",
+      name: "Premium", 
+      price: subscriptionPlans?.premium ? `€${subscriptionPlans.premium.price}` : "€49.99",
       period: "/maand",
       description: "Complete transformatie voor wie serieus is over resultaten",
       features: [
@@ -68,9 +108,9 @@ export default function Subscription() {
       popular: true,
     },
     {
-      id: "executive",
-      name: "Executive",
-      price: "Op aanvraag",
+      id: "elite",
+      name: "Elite",
+      price: subscriptionPlans?.elite ? `€${subscriptionPlans.elite.price}` : "€79.99",
       period: "",
       description: "Alles-in-één programma voor de meest veeleisende cliënten",
       features: [
@@ -86,13 +126,20 @@ export default function Subscription() {
     }
   ];
 
-  const handleUpgrade = (planId: string) => {
+  const handleUpgrade = async (planId: string) => {
+    if (isProcessing) return;
+    
+    setIsProcessing(true);
     toast({
-      title: "Upgrade Aangevraagd",
-      description: "U wordt doorgestuurd naar de betalingspagina...",
+      title: "Betaling Voorbereiden",
+      description: "U wordt doorgestuurd naar de beveiligde betalingspagina van Mollie...",
     });
-    // In a real app, this would integrate with Stripe or similar
-    console.log(`Upgrading to plan: ${planId}`);
+    
+    try {
+      await createPaymentMutation.mutateAsync(planId);
+    } catch (error) {
+      setIsProcessing(false);
+    }
   };
 
   const handleContactForExecutive = () => {
@@ -129,7 +176,7 @@ export default function Subscription() {
                   <Badge className="bg-accent text-accent-foreground" data-testid="badge-current-plan">
                     {currentPlan === "free" ? "Gratis" : 
                      currentPlan === "essentieel" ? "Essentieel" :
-                     currentPlan === "elite" ? "Elite" : "Executive"}
+                     currentPlan === "premium" ? "Premium" : "Elite"}
                   </Badge>
                 </CardTitle>
               </CardHeader>
@@ -141,7 +188,7 @@ export default function Subscription() {
                       <div className="flex justify-between">
                         <span>Status:</span>
                         <span className="text-accent font-medium" data-testid="status-subscription">
-                          {expiryDate && expiryDate > new Date() ? "Actief" : "Verlopen"}
+                          {subscriptionStatus === 'active' ? "Actief" : subscriptionStatus === 'expired' ? "Verlopen" : "Inactief"}
                         </span>
                       </div>
                       {expiryDate && (
@@ -171,10 +218,16 @@ export default function Subscription() {
                           <p>• Basis voedingsplannen</p>
                           <p>• Voortgang tracking</p>
                         </div>
+                      ) : currentPlan === "premium" ? (
+                        <div data-testid="premium-features">
+                          <p>• Uitgebreide trainingen</p>
+                          <p>• Voedingsplannen en tracking</p>
+                          <p>• Progress monitoring</p>
+                        </div>
                       ) : currentPlan === "elite" ? (
                         <div data-testid="elite-features">
                           <p>• Persoonlijke coaching</p>
-                          <p>• Geavanceerde voedingsplannen</p>
+                          <p>• Premium content</p>
                           <p>• 24/7 ondersteuning</p>
                         </div>
                       ) : (
@@ -255,7 +308,7 @@ export default function Subscription() {
                           <i className="fas fa-check mr-2"></i>
                           Huidige Plan
                         </Button>
-                      ) : plan.id === "executive" ? (
+                      ) : plan.id === "elite" && plan.price.includes("Op aanvraag") ? (
                         <Button 
                           variant="outline" 
                           className="w-full border-accent text-accent hover:bg-accent hover:text-accent-foreground"
@@ -271,9 +324,17 @@ export default function Subscription() {
                             : 'bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground'
                           }`}
                           onClick={() => handleUpgrade(plan.id)}
+                          disabled={isProcessing}
                           data-testid={`button-upgrade-${plan.id}`}
                         >
-                          Upgrade naar {plan.name}
+                          {isProcessing ? (
+                            <>
+                              <i className="fas fa-spinner fa-spin mr-2"></i>
+                              Verwerken...
+                            </>
+                          ) : (
+                            `Upgrade naar ${plan.name}`
+                          )}
                         </Button>
                       )}
                     </div>

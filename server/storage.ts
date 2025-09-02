@@ -76,6 +76,9 @@ export interface IStorage {
     currentStreak: number;
     totalCaloriesLogged: number;
   }>;
+
+  // Subscription operations
+  updateUserSubscription(userId: string, plan: string, status: string, expiresAt: Date): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -290,6 +293,19 @@ export class DatabaseStorage implements IStorage {
       currentStreak: streakResult.streak || 0,
       totalCaloriesLogged: mealLogsWithCalories[0]?.totalCalories || 0,
     };
+  }
+
+  // Subscription operations
+  async updateUserSubscription(userId: string, plan: string, status: string, expiresAt: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        subscriptionPlan: plan,
+        subscriptionStatus: status,
+        subscriptionExpiresAt: expiresAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
   }
 }
 

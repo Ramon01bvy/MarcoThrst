@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { createPayment, handlePaymentWebhook, SUBSCRIPTION_PLANS } from "./mollie";
 import { 
   insertUserWorkoutSchema, 
   insertUserExerciseLogSchema,
@@ -213,6 +214,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching user stats:", error);
       res.status(500).json({ message: "Failed to fetch user stats" });
+    }
+  });
+
+  // Payment routes
+  app.get('/api/subscription-plans', async (req, res) => {
+    res.json(SUBSCRIPTION_PLANS);
+  });
+
+  app.post('/api/create-payment', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { plan } = req.body;
+      
+      if (!plan || !SUBSCRIPTION_PLANS[plan as keyof typeof SUBSCRIPTION_PLANS]) {
+        return res.status(400).json({ message: "Invalid subscription plan" });
+      }
+
+      const redirectUrl = `${req.protocol}://${req.get('host')}/subscription?status=success`;
+      const payment = await createPayment(userId, plan, redirectUrl);
+      
+      res.json({ 
+        paymentUrl: payment.getCheckoutUrl(),
+        paymentId: payment.id 
+      });
+    } catch (error) {
+      console.error("Error creating payment:", error);
+      res.status(500).json({ message: "Failed to create payment" });
+    }
+  });
+
+  app.post('/api/webhooks/mollie', async (req, res) => {
+    try {
+      const { id: paymentId } = req.body;
+      
+      const subscriptionData = await handlePaymentWebhook(paymentId);
+      
+      if (subscriptionData) {
+        await storage.updateUserSubscription(
+          subscriptionData.userId,
+          subscriptionData.plan,
+          subscriptionData.status,
+          subscriptionData.expiresAt
+        );
+      }
+      
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error("Error handling Mollie webhook:", error);
+      res.status(400).json({ message: "Webhook error" });
+    }
+  });
+
+  // Update user subscription status
+  app.get('/api/user/subscription', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json({ 
+        plan: user?.subscriptionPlan || 'free',
+        status: user?.subscriptionStatus || 'inactive',
+        expiresAt: user?.subscriptionExpiresAt 
+      });
+    } catch (error) {
+      console.error("Error fetching subscription:", error);
+      res.status(500).json({ message: "Failed to fetch subscription" });
     }
   });
 

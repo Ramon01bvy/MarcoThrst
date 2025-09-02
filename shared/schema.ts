@@ -34,8 +34,9 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
-  subscription: varchar("subscription").default("free"),
-  subscriptionExpiry: timestamp("subscription_expiry"),
+  subscriptionPlan: varchar("subscription_plan").default("free"),
+  subscriptionStatus: varchar("subscription_status").default("inactive"),
+  subscriptionExpiresAt: timestamp("subscription_expires_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -192,7 +193,6 @@ export const upsertUserSchema = createInsertSchema(users).pick({
 });
 
 export const insertWorkoutSchema = createInsertSchema(workouts).omit({
-  id: true,
   createdAt: true,
 });
 
